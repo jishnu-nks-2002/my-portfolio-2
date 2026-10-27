@@ -108,7 +108,7 @@ function usePrefersReducedMotion() {
 export default function MaskRevealBanner({
   frontImageSrc = PLACEHOLDER_FRONT,
   backImageSrc = PLACEHOLDER_BACK,
-  mark = "JU.",
+  mark = "",
   sideLabel = "Jr. Software Engineer @ Mindstory",
   location = "Thrissur, Kerala",
   tagline = "MERN Stack Developer building dynamic, scalable & user-friendly web experiences.",
