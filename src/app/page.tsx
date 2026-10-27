@@ -37,8 +37,8 @@ export default function Home() {
           Needs /public/cv/Jishnu_Narayanan_Resume.pdf */}
       <ContactSection
         id="contact"
-        instagramUrl="https://www.instagram.com/your_handle"
-        instagramHandle="@your_handle"
+        instagramUrl="https://www.instagram.com/_._j_._u_._?rpxt=ODA4cW05ZjFnb3dq"
+        instagramHandle="_._j_._u_._"
       />
     </main>
   );
