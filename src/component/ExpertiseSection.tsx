@@ -1,183 +1,375 @@
 "use client";
 
-import React from "react";
-import LightRays from "./LightRays";
-import Shuffle from "./Shuffle";
+import React, { useEffect, useRef } from "react";
+import { gsap } from "gsap";
+import { ScrollTrigger } from "gsap/ScrollTrigger";
+import { useGSAP } from "@gsap/react";
+import {
+  Monitor,
+  Server,
+  ShoppingBag,
+  PenTool,
+  Wrench,
+  Users,
+  type LucideIcon,
+} from "lucide-react";
+import Ferrofluid from "./Ferrofluid";
+
+gsap.registerPlugin(ScrollTrigger, useGSAP);
+
+/* ---------- data (from CV) ---------- */
 
 interface SkillCategory {
   number: string;
   name: string;
+  blurb: string;
+  icon: LucideIcon;
   skills: string[];
-}
-
-interface ExpertiseSectionAltProps {
-  label?: string;
-  heading?: string;
-  categories?: SkillCategory[];
-  className?: string;
+  /** Bento grid placement on large screens. */
+  span?: string;
 }
 
 const DEFAULT_CATEGORIES: SkillCategory[] = [
   {
     number: "01",
     name: "Frontend",
+    blurb: "Responsive, animated interfaces that feel fast.",
+    icon: Monitor,
     skills: [
-      "React & Next.js",
-      "Vue.js & Nuxt",
-      "TypeScript & JavaScript",
-      "Three.js & WebGL",
-      "Tailwind CSS & Styling",
-      "Responsive Design",
-      "Progressive Web Apps (PWA)",
-      "Accessibility (A11y)",
+      "React",
+      "Next.js",
+      "Angular",
+      "JavaScript",
+      "HTML",
+      "CSS",
+      "Tailwind CSS",
+      "Bootstrap",
+      "Material UI",
+      "GSAP",
+      "Axios",
     ],
+    span: "lg:col-span-2",
   },
   {
     number: "02",
-    name: "Backend & Data",
+    name: "Backend",
+    blurb: "APIs, auth and data that scale with the product.",
+    icon: Server,
     skills: [
-      "Node.js & Express",
-      "REST APIs & GraphQL",
-      "MongoDB & PostgreSQL",
-      "MySQL & Firebase",
-      "Authentication & Authorization",
-      "API Integration & Webhooks",
-      "Payment Gateway Integration",
+      "Node.js",
+      "Express",
+      "MongoDB",
+      "Mongoose",
+      "RESTful APIs",
+      "JWT Auth",
+      "Bcrypt.js",
+      "CORS",
+      "Middleware",
+      "MVC",
+      "Python",
+      "Razorpay",
     ],
+    span: "lg:row-span-2",
   },
   {
     number: "03",
-    name: "Platforms & Commerce",
-    skills: [
-      "WordPress Development",
-      "Shopify Theme Development",
-      "WooCommerce & Custom Stores",
-      "Figma to Code",
-      "UI/UX Implementation",
-    ],
+    name: "CMS & Commerce",
+    blurb: "Custom stores and sites clients can manage.",
+    icon: ShoppingBag,
+    skills: ["Shopify", "Liquid", "WordPress", "SEO", "Performance"],
   },
   {
     number: "04",
-    name: "DevOps & Delivery",
+    name: "Design",
+    blurb: "Design roots — from mockup to pixel-perfect build.",
+    icon: PenTool,
+    skills: ["Figma", "Photoshop", "Illustrator", "UI/UX"],
+  },
+  {
+    number: "05",
+    name: "Tools & Deployment",
+    blurb: "Clean workflows from first commit to production.",
+    icon: Wrench,
     skills: [
-      "Git & Version Control",
-      "Docker & Containerization",
-      "CI/CD Pipelines",
-      "AWS & Cloud Deployment",
-      "Vercel & Netlify",
-      "Performance Optimization",
-      "SEO & Web Vitals",
-      "Testing (Jest, Vitest)",
-      "Cross-browser Compatibility",
-      "GSAP & Animation Libraries",
-      "Mobile Responsive",
+      "Git",
+      "GitHub",
+      "VS Code",
+      "Postman",
+      "Chrome DevTools",
+      "Firebase",
+      "Vercel",
+      "Netlify",
+      "Railway",
     ],
+    span: "lg:col-span-2",
+  },
+  {
+    number: "06",
+    name: "Soft Skills",
+    blurb: "How I work with teams and clients.",
+    icon: Users,
+    skills: ["Communication", "Teamwork", "Problem-Solving", "Leadership", "Adaptability", "Time Management"],
   },
 ];
 
-export default function ExpertiseSectionAlt({
-  label = "// EXPERTISE & SKILLS",
-  heading = "Full Stack Development Capabilities.",
-  categories = DEFAULT_CATEGORIES,
-  className = "",
-}: ExpertiseSectionAltProps) {
-  return (
-    <section className={`relative w-full bg-black overflow-hidden ${className}`}>
-      {/* Light Rays Background */}
-      <div className="absolute inset-0 w-full h-full">
-        <LightRays
-          raysOrigin="top-center"
-          raysSpeed={1.2}
-          lightSpread={1.5}
-          rayLength={2.5}
-          pulsating={true}
-          fadeDistance={1.2}
-          saturation={0.8}
-          followMouse={true}
-        />
-      </div>
+/* ---------- 3D tilt card ----------
+ * No borders — depth comes from soft shadows and layers.
+ * The card tilts toward the mouse; icon, title and chips sit at different
+ * depths (translateZ) so they shift against each other as it tilts.
+ * Mouse-only; flat on touch screens and with reduced motion.
+ */
 
-      {/* Content overlay */}
-      <div className="relative z-10 py-24 px-6 md:px-12 lg:px-16">
-        <div className="max-w-6xl mx-auto">
-          {/* Label */}
-          <div className="mb-6 md:mb-10">
-            <p className="text-xs md:text-sm font-mono text-orange-500 tracking-widest uppercase">
-              {label}
-            </p>
+function TiltCard({ className = "", children }: { className?: string; children: React.ReactNode }) {
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
+  const glareRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const wrap = wrapRef.current;
+    const card = cardRef.current;
+    const glare = glareRef.current;
+    if (!wrap || !card || !glare) return;
+
+    const canTilt =
+      window.matchMedia("(hover: hover) and (pointer: fine)").matches &&
+      !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (!canTilt) return;
+
+    const MAX_DEG = 8;
+    let tx = 0;
+    let ty = 0;
+    let cx = 0;
+    let cy = 0;
+    let gx = 50;
+    let gy = 50;
+    let raf = 0;
+
+    const loop = () => {
+      cx += (tx - cx) * 0.12;
+      cy += (ty - cy) * 0.12;
+      card.style.transform = `rotateX(${cy.toFixed(2)}deg) rotateY(${cx.toFixed(2)}deg)`;
+      glare.style.background = `radial-gradient(circle at ${gx}% ${gy}%, rgba(255,255,255,0.7), rgba(255,255,255,0) 50%)`;
+      if (Math.abs(tx - cx) > 0.01 || Math.abs(ty - cy) > 0.01) raf = requestAnimationFrame(loop);
+      else raf = 0;
+    };
+    const start = () => {
+      if (!raf) raf = requestAnimationFrame(loop);
+    };
+
+    const onMove = (e: PointerEvent) => {
+      const r = wrap.getBoundingClientRect();
+      const nx = (e.clientX - r.left) / r.width;
+      const ny = (e.clientY - r.top) / r.height;
+      tx = (nx - 0.5) * 2 * MAX_DEG;
+      ty = -(ny - 0.5) * 2 * MAX_DEG;
+      gx = nx * 100;
+      gy = ny * 100;
+      glare.style.opacity = "1";
+      start();
+    };
+    const onLeave = () => {
+      tx = 0;
+      ty = 0;
+      glare.style.opacity = "0";
+      start();
+    };
+
+    wrap.addEventListener("pointermove", onMove);
+    wrap.addEventListener("pointerleave", onLeave);
+    return () => {
+      cancelAnimationFrame(raf);
+      wrap.removeEventListener("pointermove", onMove);
+      wrap.removeEventListener("pointerleave", onLeave);
+    };
+  }, []);
+
+  return (
+    // outer wrapper: perspective + entrance animation target (kept separate from the tilt transform)
+    <div ref={wrapRef} className={`expertise-card group [perspective:1200px] ${className}`}>
+      <div
+        ref={cardRef}
+        className="relative h-full rounded-3xl bg-white/90 p-6 [transform-style:preserve-3d] will-change-transform md:p-8
+          shadow-[0_1px_2px_rgba(0,0,0,0.04),0_12px_32px_-16px_rgba(0,0,0,0.18)]
+          transition-shadow duration-500
+          group-hover:shadow-[0_2px_4px_rgba(0,0,0,0.04),0_40px_70px_-24px_rgba(232,64,32,0.35),0_24px_40px_-24px_rgba(0,0,0,0.25)]"
+      >
+        {/* glare */}
+        <div
+          ref={glareRef}
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 rounded-3xl opacity-0 mix-blend-soft-light transition-opacity duration-300 [transform:translateZ(1px)]"
+        />
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/* ---------- section ---------- */
+
+interface ExpertiseSectionProps {
+  id?: string;
+  label?: string;
+  heading?: string;
+  categories?: SkillCategory[];
+  /** Turn the ferrofluid background off (plain black). */
+  showFluid?: boolean;
+  className?: string;
+}
+
+export default function ExpertiseSection({
+  id = "expertise",
+  label = "// EXPERTISE & SKILLS",
+  heading = "The stack I build with.",
+  categories = DEFAULT_CATEGORIES,
+  showFluid = true,
+  className = "",
+}: ExpertiseSectionProps) {
+  const rootRef = useRef<HTMLElement>(null);
+  const total = categories.reduce((n, c) => n + c.skills.length, 0);
+
+  // Header and cards rise in once when scrolled into view.
+  useGSAP(
+    () => {
+      const mm = gsap.matchMedia();
+      mm.add("(prefers-reduced-motion: no-preference)", () => {
+        gsap.from(".expertise-head > *", {
+          opacity: 0,
+          y: 24,
+          duration: 0.7,
+          ease: "power3.out",
+          stagger: 0.1,
+          scrollTrigger: { trigger: ".expertise-head", start: "top 85%", once: true },
+        });
+        gsap.from(".expertise-card", {
+          opacity: 0,
+          y: 50,
+          duration: 0.9,
+          ease: "power3.out",
+          stagger: 0.08,
+          scrollTrigger: { trigger: ".expertise-grid", start: "top 80%", once: true },
+        });
+      });
+      return () => mm.revert();
+    },
+    { scope: rootRef }
+  );
+
+  return (
+    <section
+      ref={rootRef}
+      id={id}
+      aria-labelledby={`${id}-heading`}
+      className={`relative isolate w-full overflow-hidden bg-[#f4f3f1] ${className}`}
+    >
+      {/* ferrofluid background — light "paper" mode on off-white, shaded in red */}
+      {showFluid && (
+        <div aria-hidden="true" className="absolute inset-0 -z-10">
+          <Ferrofluid
+            lightMode
+            colors={["#e84020", "#e84020", "#ff8a6b"]}
+            transparent={false}
+            color="#f4f3f1"
+            brightness={1}
+            speed={0.4}
+            scale={1.6}
+            spikeHeight={1}
+            sharpness={2.5}
+            turbulence={1}
+            fluidity={0.5}
+            tilt={48}
+            magnetism={1}
+            flowDirection="down"
+            mouseInteraction
+            mouseStrength={1}
+            mouseRadius={0.22}
+            clickPulse
+            intro
+          />
+          {/* darken top/bottom so it blends into the next sections and keeps text readable */}
+          <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-[#f4f3f1] via-[#f4f3f1]/20 to-[#f4f3f1]" />
+        </div>
+      )}
+
+      <div className="relative px-6 py-20 md:px-12 md:py-28 lg:px-16">
+        <div className="mx-auto max-w-7xl">
+          {/* header */}
+          <div className="expertise-head mb-14 flex flex-col gap-8 md:mb-20 md:flex-row md:items-end md:justify-between">
+            <div>
+              <p className="mb-6 font-mono text-xs font-bold uppercase tracking-widest text-[#e84020] md:text-sm">
+                {label}
+              </p>
+              <h2
+                id={`${id}-heading`}
+                className="max-w-2xl text-4xl font-bold leading-[1.1] tracking-tight text-black md:text-6xl"
+              >
+                {heading}
+              </h2>
+            </div>
+
+            <div className="flex gap-10">
+              <div>
+                <p className="text-4xl font-bold text-black md:text-5xl">
+                  {String(categories.length).padStart(2, "0")}
+                  <span className="text-[#e84020]">.</span>
+                </p>
+                <p className="mt-1 text-xs uppercase tracking-wider text-neutral-500">Areas</p>
+              </div>
+              <div>
+                <p className="text-4xl font-bold text-black md:text-5xl">
+                  {total}
+                  <span className="text-[#e84020]">+</span>
+                </p>
+                <p className="mt-1 text-xs uppercase tracking-wider text-neutral-500">Tools & skills</p>
+              </div>
+            </div>
           </div>
 
-          {/* Heading */}
-          <h2 className="mb-16 md:mb-20 max-w-3xl">
-            <Shuffle
-              text={heading}
-              tag="span"
-              textAlign="left"
-              className="block font-bold text-white"
-              style={{
-                textTransform: "none",
-                fontSize: "clamp(1.875rem, 4vw, 3rem)",
-                lineHeight: 1.2,
-              }}
-              shuffleDirection="right"
-              duration={0.35}
-              shuffleTimes={2}
-              animationMode="evenodd"
-              stagger={0.02}
-              colorFrom="#555555"
-              colorTo="#ffffff"
-              triggerOnce
-              triggerOnHover
-            />
-          </h2>
-
-          {/* Skill Categories */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-14 lg:gap-x-16">
-            {categories.map((category) => (
-              <div
-                key={category.number}
-                className="border-t border-white/10 pt-6"
-              >
-                {/* Category header */}
-                <div className="mb-6 flex items-baseline gap-3">
-                  <span className="font-mono text-xs text-[#e84020]">
-                    {category.number}
+          {/* bento grid */}
+          <div className="expertise-grid grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-3 lg:gap-6">
+            {categories.map((cat) => {
+              const Icon = cat.icon;
+              return (
+                <TiltCard key={cat.number} className={cat.span ?? ""}>
+                  {/* big faded number — back layer */}
+                  <span
+                    aria-hidden="true"
+                    className="pointer-events-none absolute right-6 top-4 select-none text-7xl font-bold leading-none text-neutral-100 transition-colors duration-500 [transform:translateZ(10px)] group-hover:text-[#e84020]/15 md:text-8xl"
+                  >
+                    {cat.number}
                   </span>
-                  <h3 className="text-lg md:text-xl font-semibold text-white">
-                    {category.name}
-                  </h3>
-                </div>
 
-                {/* Skill chips */}
-                <div className="flex flex-wrap gap-2.5">
-                  {category.skills.map((skill, idx) => (
-                    <div
-                      key={idx}
-                      className="group cursor-pointer rounded-full border border-white/15 px-4 py-2 transition-colors duration-300 hover:border-[#e84020] hover:bg-[#e84020]/10"
-                    >
-                      <Shuffle
-                        text={skill}
-                        tag="span"
-                        textAlign="left"
-                        className="block font-medium text-white/70 group-hover:text-white transition-colors duration-300"
-                        style={{
-                          textTransform: "none",
-                          fontSize: "0.875rem",
-                          lineHeight: 1.3,
-                        }}
-                        shuffleDirection="right"
-                        duration={0.3}
-                        shuffleTimes={1}
-                        animationMode="evenodd"
-                        stagger={0.015}
-                        triggerOnce={false}
-                        triggerOnHover
-                      />
+                  <div className="relative flex h-full flex-col [transform-style:preserve-3d]">
+                    {/* icon — front-most layer */}
+                    <div className="mb-6 flex h-12 w-12 items-center justify-center rounded-2xl bg-[#e84020] text-white shadow-[0_10px_24px_-8px_rgba(232,64,32,0.6)] [transform:translateZ(50px)]">
+                      <Icon size={22} aria-hidden="true" />
                     </div>
-                  ))}
-                </div>
-              </div>
-            ))}
+
+                    {/* title + blurb — middle layer */}
+                    <div className="[transform:translateZ(35px)]">
+                      <p className="mb-1 font-mono text-xs text-[#e84020]">{cat.number}</p>
+                      <h3 className="text-xl font-semibold text-black md:text-2xl">{cat.name}</h3>
+                      <p className="mt-2 text-sm leading-relaxed text-neutral-500">{cat.blurb}</p>
+                    </div>
+
+                    {/* chips — slightly raised */}
+                    <ul
+                      className="mt-6 flex flex-wrap gap-2 [transform:translateZ(20px)]"
+                      aria-label={`${cat.name} skills`}
+                    >
+                      {cat.skills.map((skill) => (
+                        <li
+                          key={skill}
+                          className="rounded-full bg-neutral-100 px-3 py-1.5 text-xs font-medium text-neutral-700 transition-colors duration-200 hover:bg-[#e84020] hover:text-white md:text-sm"
+                        >
+                          {skill}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </TiltCard>
+              );
+            })}
           </div>
         </div>
       </div>

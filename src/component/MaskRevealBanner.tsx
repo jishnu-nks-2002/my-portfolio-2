@@ -1,28 +1,11 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
-import { Mail, Phone, ArrowDown } from "lucide-react";
+import React, { useEffect, useRef, useState } from "react";
+import { Mail, Phone, ArrowDown, MapPin } from "lucide-react";
 import RevealCanvas from "./RevealCanvas";
 import CustomCursor from "./CustomCursor";
 import SplitText from "./SplitText";
 
-/**
- * MaskRevealBanner
- * ------------------------------------------------------------------
- * Hero banner: `frontImageSrc` is always visible; a trailing chain of
- * soft circles (tied to the cursor, with inertia and fade-out) reveals
- * `backImageSrc` as it drags across — same pair-of-photos idea as the
- * hero section on mohamedshehata.net. Pairs with a magnetic cursor
- * that grows and fills when it passes over a link or button.
- *
- * Files this depends on (same folder):
- *  - RevealCanvas.tsx   the canvas draw loop / trail math
- *  - CustomCursor.tsx   the dot + growing ring cursor
- *  - SplitText.tsx      per-character reveal animation (GSAP)
- * ------------------------------------------------------------------
- */
-
-/** LinkedIn's mark isn't in lucide-react (brand icons were removed), so it's a small inline SVG. */
 function LinkedinIcon({ size = 16 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
@@ -36,8 +19,16 @@ interface MaskRevealBannerProps {
   frontImageSrc?: string;
   /** Photo revealed by the cursor trail. */
   backImageSrc?: string;
+  /** Monogram shown top-left. */
   mark?: string;
+  /** Label shown on the right (current role / company). */
   sideLabel?: string;
+  /** Location shown under the side label. */
+  location?: string;
+  /** Short intro line shown above the big rotating text. */
+  tagline?: string;
+  /** Skill chips shown on the right. */
+  skills?: string[];
   email?: string;
   phone?: string;
   linkedinUrl?: string;
@@ -49,8 +40,12 @@ interface MaskRevealBannerProps {
   trailLength?: number;
   /** Radius (px) of each reveal circle. */
   blobRadius?: number;
+  /** id of the section the scroll arrow should scroll to. If omitted, scrolls one screen down. */
+  nextSectionId?: string;
   className?: string;
 }
+
+/* ---------- module-level defaults (stable references → no effect re-runs) ---------- */
 
 const PLACEHOLDER_FRONT =
   "data:image/svg+xml;utf8," +
@@ -72,42 +67,154 @@ const PLACEHOLDER_BACK =
     </svg>
   `);
 
+const DEFAULT_SKILLS = ["React", "Next.js", "Node.js", "MongoDB", "GSAP", "Shopify", "WordPress"];
+
+const DEFAULT_BOTTOM_TEXTS = [
+  "Jishnu Narayanan",
+  "Jr. Software Engineer",
+  "MERN Stack Developer",
+  "Shopify & WordPress",
+];
+
+/* ---------- small hooks ---------- */
+
+/** true only on devices with a real mouse (hides the custom cursor on phones/tablets). */
+function useFinePointer() {
+  const [fine, setFine] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(hover: hover) and (pointer: fine)");
+    const update = () => setFine(mq.matches);
+    update();
+    mq.addEventListener("change", update);
+    return () => mq.removeEventListener("change", update);
+  }, []);
+  return fine;
+}
+
+function usePrefersReducedMotion() {
+  const [reduced, setReduced] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const update = () => setReduced(mq.matches);
+    update();
+    mq.addEventListener("change", update);
+    return () => mq.removeEventListener("change", update);
+  }, []);
+  return reduced;
+}
+
+/* ---------- component ---------- */
+
 export default function MaskRevealBanner({
   frontImageSrc = PLACEHOLDER_FRONT,
   backImageSrc = PLACEHOLDER_BACK,
-  mark = "W.",
-  sideLabel = "Honors",
-  email = "hello@example.com",
-  phone = "+1 (000) 000-0000",
-  linkedinUrl = "#",
-  bottomTexts = ["Jishnu Narayanan", "Creative Developer"],
+  mark = "JU.",
+  sideLabel = "Jr. Software Engineer @ Mindstory",
+  location = "Thrissur, Kerala",
+  tagline = "MERN Stack Developer building dynamic, scalable & user-friendly web experiences.",
+  skills = DEFAULT_SKILLS,
+  email = "jishnunarayanan2002@gmail.com",
+  phone = "+91 7012521841",
+  linkedinUrl = "https://www.linkedin.com/in/jishnu-narayanan-ks",
+  bottomTexts = DEFAULT_BOTTOM_TEXTS,
   bottomTextInterval = 3000,
   trailLength = 26,
   blobRadius = 130,
+  nextSectionId,
   className = "",
 }: MaskRevealBannerProps) {
-  const [textIndex, setTextIndex] = useState(0);
+  const sectionRef = useRef<HTMLElement>(null);
+  const finePointer = useFinePointer();
+  const reducedMotion = usePrefersReducedMotion();
 
+  const [textIndex, setTextIndex] = useState(0);
+  const [inView, setInView] = useState(true);
+  const [tabVisible, setTabVisible] = useState(true);
+
+  // Keep the index valid even if the parent passes a shorter array later.
+  const textCount = bottomTexts.length;
+  const safeIndex = textCount > 0 ? textIndex % textCount : 0;
+  const currentText = textCount > 0 ? bottomTexts[safeIndex] : "";
+
+  // Pause the rotation when the banner is scrolled out of view…
   useEffect(() => {
-    if (bottomTexts.length < 2) return;
-    const id = setInterval(() => {
-      setTextIndex((prev) => (prev + 1) % bottomTexts.length);
-    }, bottomTextInterval);
-    return () => clearInterval(id);
-  }, [bottomTexts, bottomTextInterval]);
+    const el = sectionRef.current;
+    if (!el) return;
+    const io = new IntersectionObserver(([entry]) => setInView(entry.isIntersecting), {
+      threshold: 0.1,
+    });
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
+
+  // …or when the browser tab is in the background.
+  useEffect(() => {
+    const onVis = () => setTabVisible(document.visibilityState === "visible");
+    onVis();
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, []);
+
+  // Rotate bottom text. Depends on the count (a number), not the array identity,
+  // so inline arrays from the parent don't restart the timer on every render.
+  useEffect(() => {
+    if (textCount < 2 || !inView || !tabVisible) return;
+    const id = window.setInterval(() => {
+      setTextIndex((prev) => (prev + 1) % textCount);
+    }, Math.max(bottomTextInterval, 1200));
+    return () => window.clearInterval(id);
+  }, [textCount, bottomTextInterval, inView, tabVisible]);
+
+  const telHref = `tel:${phone.replace(/[^\d+]/g, "")}`;
+
+  const handleScrollDown = () => {
+    const behavior: ScrollBehavior = reducedMotion ? "auto" : "smooth";
+    const target = nextSectionId ? document.getElementById(nextSectionId) : null;
+    if (target) {
+      target.scrollIntoView({ behavior, block: "start" });
+    } else {
+      const bottom = sectionRef.current?.getBoundingClientRect().bottom ?? window.innerHeight;
+      window.scrollBy({ top: bottom, behavior });
+    }
+  };
+
+  const handleMarkClick = (e: React.MouseEvent) => {
+    e.preventDefault();
+    window.scrollTo({ top: 0, behavior: reducedMotion ? "auto" : "smooth" });
+  };
 
   return (
     <section
-      className={`relative w-full h-screen overflow-hidden cursor-none select-none bg-gradient-to-br from-[#3a0f08] via-[#8a2c10] to-[#e08a2e] ${className}`}
+      ref={sectionRef}
+      aria-label="Introduction"
+      className={`relative isolate w-full h-screen supports-[height:100svh]:h-[100svh] min-h-[560px] overflow-hidden select-none bg-gradient-to-br from-[#3a0f08] via-[#8a2c10] to-[#e08a2e] ${
+        finePointer ? "cursor-none" : ""
+      } ${className}`}
     >
-      <CustomCursor size={8} ringSize={36} hoverRingSize={90} color="#f97316" mixBlendMode="normal" />
+      {/* custom cursor only where there's a real mouse */}
+      {finePointer && (
+        <CustomCursor
+          size={8}
+          ringSize={36}
+          hoverRingSize={90}
+          color="#f97316"
+          mixBlendMode="normal"
+          scopeRef={sectionRef}
+        />
+      )}
 
-      {/* ambient glow blobs */}
-      <div className="pointer-events-none absolute -top-24 right-0 h-[560px] w-[560px] rounded-full bg-orange-500/30 blur-[120px]" />
-      <div className="pointer-events-none absolute bottom-0 left-1/3 h-[420px] w-[420px] rounded-full bg-black/30 blur-[110px]" />
+      {/* ambient glow blobs — GPU-promoted so the blur doesn't repaint every frame */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute -top-24 right-0 h-[560px] w-[560px] rounded-full bg-orange-500/30 blur-[120px] transform-gpu"
+      />
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute bottom-0 left-1/3 h-[420px] w-[420px] rounded-full bg-black/30 blur-[110px] transform-gpu"
+      />
 
       {/* the reveal itself */}
-      <div className="absolute inset-0">
+      <div className="absolute inset-0 z-0">
         <RevealCanvas
           frontImageSrc={frontImageSrc}
           backImageSrc={backImageSrc}
@@ -116,69 +223,134 @@ export default function MaskRevealBanner({
         />
       </div>
 
-      {/* top-right mark */}
-      <div className="pointer-events-none absolute top-6 right-6 bg-black px-3 py-2 text-sm font-semibold tracking-wide text-white">
+      {/* monogram — top left */}
+      <a
+        href="#"
+        onClick={handleMarkClick}
+        data-cursor-label="Home"
+        aria-label="Back to top"
+        className="absolute left-5 top-6 z-10 text-2xl font-bold tracking-tight text-white md:left-8 md:top-8 md:text-3xl"
+      >
         {mark}
+      </a>
+
+      {/* role + location + skills — right edge, vertically centered (desktop) */}
+      <div className="pointer-events-none absolute right-8 top-1/2 z-10 hidden -translate-y-1/2 md:block">
+        <div className="pointer-events-auto flex flex-col items-end gap-1 text-right">
+          <span className="flex items-center gap-2 text-sm font-medium text-white">
+            <span className="relative flex h-2 w-2" aria-hidden="true">
+              {!reducedMotion && (
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75" />
+              )}
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-green-400" />
+            </span>
+            {sideLabel}
+          </span>
+          <span className="flex items-center gap-1 text-xs text-white/70">
+            <MapPin size={12} aria-hidden="true" /> {location}
+          </span>
+
+          {skills.length > 0 && (
+            <ul className="mt-3 flex max-w-xs flex-wrap justify-end gap-2">
+              {skills.map((s) => (
+                <li
+                  key={s}
+                  className="rounded-full border border-white/25 bg-white/5 px-3 py-1 text-[11px] uppercase tracking-wider text-white/80 backdrop-blur-sm"
+                >
+                  {s}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       </div>
 
-      {/* right-edge vertical tab */}
-      <div className="pointer-events-none absolute top-24 right-6 bg-black px-2 py-6 text-xs uppercase tracking-[0.25em] text-white [writing-mode:vertical-rl] rotate-180">
-        {sideLabel}
+      {/* role + location — compact top-right version for mobile */}
+      <div className="absolute right-5 top-7 z-10 flex flex-col items-end gap-0.5 text-right md:hidden">
+        <span className="flex items-center gap-1.5 text-xs font-medium text-white">
+          <span className="inline-flex h-1.5 w-1.5 rounded-full bg-green-400" aria-hidden="true" />
+          {sideLabel}
+        </span>
+        <span className="flex items-center gap-1 text-[11px] text-white/70">
+          <MapPin size={10} aria-hidden="true" /> {location}
+        </span>
       </div>
 
-      {/* left-edge contact links — vertically centered, data-cursor-label drives the text inside the cursor ring */}
-      <div className="absolute left-8 top-1/2 -translate-y-1/2 z-10 flex flex-col gap-5 text-sm text-white/90">
-        
-        <a  href={linkedinUrl}
+      {/* left-edge contact links — vertically centered */}
+      <nav
+        aria-label="Contact"
+        className="absolute left-5 top-1/2 z-10 flex -translate-y-1/2 flex-col gap-5 text-sm text-white/90 md:left-8"
+      >
+        <a
+          href={linkedinUrl}
+          target="_blank"
+          rel="noopener noreferrer"
           data-cursor-label="Open"
-          className="flex items-center gap-2 transition-colors hover:text-orange-400"
+          className="flex items-center gap-2 transition-colors hover:text-orange-400 focus-visible:text-orange-400 focus-visible:outline-none"
         >
           <LinkedinIcon size={16} /> LinkedIn
         </a>
 
-        
-        <a  href={`mailto:${email}`}
+        <a
+          href={`mailto:${email}`}
           data-cursor-label="Mail"
-          className="flex items-center gap-2 transition-colors hover:text-orange-400"
+          className="flex items-center gap-2 transition-colors hover:text-orange-400 focus-visible:text-orange-400 focus-visible:outline-none"
         >
-          <Mail size={16} /> Email
+          <Mail size={16} aria-hidden="true" /> Email
         </a>
 
-        
-        <a  href={`tel:${phone}`}
+        <a
+          href={telHref}
           data-cursor-label="Call"
-          className="flex items-center gap-2 transition-colors hover:text-orange-400"
+          className="flex items-center gap-2 transition-colors hover:text-orange-400 focus-visible:text-orange-400 focus-visible:outline-none"
         >
-          <Phone size={16} /> Phone
+          <Phone size={16} aria-hidden="true" /> Phone
         </a>
-      </div>
+      </nav>
 
-      {/* large bottom text — rotates through bottomTexts, replaying the split animation each switch */}
-      <div className="absolute inset-x-0 bottom-16 z-10 px-8">
-        <SplitText
-          key={textIndex}
-          text={bottomTexts[textIndex]}
-          tag="h2"
-          splitType="chars"
-          delay={30}
-          duration={1}
-          ease="power3.out"
-          from={{ opacity: 0, y: 60 }}
-          to={{ opacity: 1, y: 0 }}
-          animateOnScroll={false}
-          startDelay={0}
-          textAlign="left"
-          className="text-[clamp(2.5rem,8vw,7rem)] font-bold leading-[0.9] tracking-tight text-white"
-        />
+      {/* tagline + large rotating text */}
+      <div className="pointer-events-none absolute inset-x-0 bottom-14 z-10 px-5 md:bottom-16 md:px-8">
+        <p className="mb-4 max-w-md text-sm leading-relaxed text-white/75 md:text-base">{tagline}</p>
+
+        {/* min height so the layout doesn't jump between texts; text may wrap on phones */}
+        <div className="min-h-[clamp(2.25rem,8vw,7rem)]" aria-live="polite">
+          {currentText &&
+            (reducedMotion ? (
+              <h2 className="pb-[0.12em] text-[clamp(2.25rem,8vw,7rem)] font-bold leading-[0.95] tracking-tight text-white">
+                {currentText}
+              </h2>
+            ) : (
+              <SplitText
+                key={`${safeIndex}-${currentText}`}
+                text={currentText}
+                tag="h2"
+                splitType="chars"
+                delay={30}
+                duration={1}
+                ease="power3.out"
+                from={{ opacity: 0, y: 60 }}
+                to={{ opacity: 1, y: 0 }}
+                animateOnScroll={false}
+                startDelay={0}
+                textAlign="left"
+                className="max-w-full pb-[0.12em] text-[clamp(2.25rem,8vw,7rem)] font-bold leading-[0.95] tracking-tight text-white"
+              />
+            ))}
+        </div>
       </div>
 
       {/* scroll cue */}
-      <div
+      <button
+        type="button"
+        onClick={handleScrollDown}
         data-cursor-label="Scroll"
-        className="absolute bottom-6 right-8 z-10 animate-bounce text-white/70"
+        aria-label="Scroll to next section"
+        className={`absolute bottom-6 right-5 z-10 text-white/70 transition-colors hover:text-white md:right-8 ${
+          reducedMotion ? "" : "animate-bounce"
+        } ${finePointer ? "cursor-none" : ""}`}
       >
         <ArrowDown size={20} />
-      </div>
+      </button>
     </section>
   );
 }

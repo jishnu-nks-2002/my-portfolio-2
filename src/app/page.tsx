@@ -1,42 +1,43 @@
 import AboutSection from "@/component/AboutSection";
-import CustomCursor from "@/component/CustomCursor";
+import ContactSection from "@/component/ContactSection";
 import ExpertiseSection from "@/component/ExpertiseSection";
 import FloatingNavbar from "@/component/FloatingNavbar";
 import IntroSection from "@/component/IntroSection";
 import MaskRevealBanner from "@/component/MaskRevealBanner";
-import ProjectsCollection from "@/component/ProjectsCollection";
+import ProjectsSection from "@/component/ProjectsSection";
 import WorkExperience from "@/component/WorkExperience";
-import Image from "next/image";
+
 
 export default function Home() {
   return (
-  <div>
-    <CustomCursor ringSize={10} hoverRingSize={10} color="#f97316" />
-<FloatingNavbar/>
+    <main>
+      <FloatingNavbar />
 
-<MaskRevealBanner
-  frontImageSrc="  /images/img-2.jpeg"
-  backImageSrc="/images/img-1.jpeg "
-  mark="W."
-  sideLabel="Honors"
-  email="you@site.com"
-/>
-<IntroSection 
-        label="// INTRO"
+      {/* name, role, contacts and skills come from the banner's CV defaults */}
+      <MaskRevealBanner
+        frontImageSrc="/images/img-3.png"
+        backImageSrc="/images/img-4.png"
+        nextSectionId="intro"
       />
-  <AboutSection 
-        imageSrc="/images/about-img.jpeg"
-        heading="23 years building UX organizations that outperform."
+
+      <IntroSection id="intro" />
+
+      <AboutSection id="about" imageSrc="/images/about-img.jpeg" />
+
+      <ExpertiseSection id="expertise" />
+
+      <WorkExperience id="experience" />
+
+      <ProjectsSection id="projects" />
+
+      {/* big WhatsApp / Instagram / LinkedIn / Email tiles + CV download.
+          Needs /public/cv/Jishnu_Narayanan_Resume.pdf */}
+      <ContactSection
+        id="contact"
+        instagramUrl="https://www.instagram.com/your_handle"
+        instagramHandle="@your_handle"
       />
-      <ExpertiseSection/>
 
-      <WorkExperience/>
-
-      <ProjectsCollection/>
-
-      
-
-
-  </div>
+    </main>
   );
 }
