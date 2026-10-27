@@ -22,7 +22,7 @@ export default function Home() {
 
       <IntroSection id="intro" />
 
-      <AboutSection id="about" imageSrc="/images/about-img.jpeg" />
+      <AboutSection id="about" imageSrc="/images/footer.png" />
 
       <ExpertiseSection id="expertise" />
 
