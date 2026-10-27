@@ -4,13 +4,16 @@ import ExpertiseSection from "@/component/ExpertiseSection";
 import FloatingNavbar from "@/component/FloatingNavbar";
 import IntroSection from "@/component/IntroSection";
 import MaskRevealBanner from "@/component/MaskRevealBanner";
+import Preloader from "@/component/Preloader";
 import ProjectsSection from "@/component/ProjectsSection";
 import WorkExperience from "@/component/WorkExperience";
-
 
 export default function Home() {
   return (
     <main>
+      {/* developer-style loading screen — removes itself when the page is ready */}
+      <Preloader />
+
       <FloatingNavbar />
 
       {/* name, role, contacts and skills come from the banner's CV defaults */}
@@ -37,7 +40,6 @@ export default function Home() {
         instagramUrl="https://www.instagram.com/your_handle"
         instagramHandle="@your_handle"
       />
-
     </main>
   );
 }
