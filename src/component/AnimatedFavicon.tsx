@@ -29,10 +29,11 @@ const CYCLE_MS = 2400;
 const mix = (a: [number, number, number], b: [number, number, number], t: number) =>
   `rgb(${a.map((v, i) => Math.round(v + (b[i] - v) * t)).join(",")})`;
 
-// "JU" letter shapes from the favicon SVG (512×512 artboard)
-const LETTERS = new Path2D(
-  "M112.2 365.2C162.8 365.2 190.9 340.1 190.9 295.1V146.8H130.9V293.9C130.9 307.8 123.8 315.6 111.1 315.6C98.5 315.6 91.4 307.8 91.4 293.9V276.3H36V293.4C36 339.5 63.3 365.2 112.2 365.2Z M306.6 365.2C362.7 365.2 399.2 333.7 399.2 285.3V146.8H340.9V280.4C340.9 300.4 326.8 314.7 306.6 314.7C286.7 314.7 272.3 300.3 272.3 280.4V146.8H214V285.3C214 333.9 250.3 365.2 306.6 365.2Z"
-);
+// "JU" letter shapes from the favicon SVG (512×512 artboard).
+// Kept as a plain string here — Path2D only exists in the browser, so it's created
+// inside useEffect (creating it at the top level crashes the server build).
+const LETTERS_PATH =
+  "M112.2 365.2C162.8 365.2 190.9 340.1 190.9 295.1V146.8H130.9V293.9C130.9 307.8 123.8 315.6 111.1 315.6C98.5 315.6 91.4 307.8 91.4 293.9V276.3H36V293.4C36 339.5 63.3 365.2 112.2 365.2Z M306.6 365.2C362.7 365.2 399.2 333.7 399.2 285.3V146.8H340.9V280.4C340.9 300.4 326.8 314.7 306.6 314.7C286.7 314.7 272.3 300.3 272.3 280.4V146.8H214V285.3C214 333.9 250.3 365.2 306.6 365.2Z";
 const DOT = { x: 445, y: 334.2, r: 31 };
 
 export default function AnimatedFavicon({
@@ -55,9 +56,11 @@ export default function AnimatedFavicon({
     };
     document.addEventListener("visibilitychange", onVisibility);
 
-    if (reduced) {
+    // browser-only canvas features — skip the animation (keep the static icon) if missing
+    if (reduced || typeof Path2D === "undefined") {
       return () => document.removeEventListener("visibilitychange", onVisibility);
     }
+    const LETTERS = new Path2D(LETTERS_PATH);
 
     /* ---------- animated icon ---------- */
     const canvas = document.createElement("canvas");
@@ -82,7 +85,8 @@ export default function AnimatedFavicon({
       // rounded black tile
       ctx.fillStyle = BG;
       ctx.beginPath();
-      ctx.roundRect(0, 0, 512, 512, 104);
+      if (typeof ctx.roundRect === "function") ctx.roundRect(0, 0, 512, 512, 104);
+      else ctx.rect(0, 0, 512, 512); // very old browsers: square tile
       ctx.fill();
 
       // 0 → 1 → 0 over the cycle, eased, with a short hold at each end
