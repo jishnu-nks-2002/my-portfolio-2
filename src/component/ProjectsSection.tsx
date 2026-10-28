@@ -2,7 +2,10 @@
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowUpRight } from "lucide-react";
-import CircularCarousel, { type CircularCarouselItem } from "./CircularCarousel";
+import CircularCarousel, {
+  type CircularCarouselItem,
+  type CircularCarouselVideoSource,
+} from "./CircularCarousel";
 
 /* ---------- data (from CV) ---------- */
 
@@ -15,9 +18,9 @@ interface Project {
   stack: string[];
   description: string;
   url: string;
-  /** Poster / fallback image. Defaults to a live screenshot of `url`. */
+  /** Poster image. Defaults to the video's first frame (/projects/<name>.webp). */
   image?: string;
-  /** Short muted screen recording that loops on the card (mp4). */
+  /** Name of the recording in /public/projects/ (without extension). */
   video?: string;
 }
 
@@ -27,8 +30,23 @@ interface Project {
  */
 const shot = (url: string) => `https://image.thum.io/get/width/1200/crop/750/${url}`;
 
-/** Put your screen recordings in /public/videos/projects/ — e.g. /public/videos/projects/inspire.mp4 */
-const vid = (name: string) => `/projects/${name}.webm`;
+/**
+ * Each recording lives in /public/projects/ as five small files:
+ *   <name>-m.webm / <name>-m.mp4   phones   (640px, 12s loop, ~150–400 KB)
+ *   <name>.webm   / <name>.mp4     desktop  (1280px, 12s loop)
+ *   <name>.webp                    poster — the first frame, shown instantly
+ * WebM is smallest; MP4 is the fallback for iPhones/Safari that can't play it.
+ */
+const DIR = "/projects";
+const MOBILE = "(max-width: 767px)";
+const videoSources = (name: string): CircularCarouselVideoSource[] => [
+  { src: `${DIR}/${name}-m.webm`, type: 'video/webm; codecs="vp9"', media: MOBILE },
+  { src: `${DIR}/${name}-m.mp4`, type: "video/mp4", media: MOBILE },
+  { src: `${DIR}/${name}.webm`, type: 'video/webm; codecs="vp9"' },
+  { src: `${DIR}/${name}.mp4`, type: "video/mp4" },
+];
+const poster = (name: string) => `${DIR}/${name}.webp`;
+const vid = (name: string) => name;
 
 const PROJECTS: Project[] = [
   {
@@ -152,10 +170,11 @@ const PROJECTS: Project[] = [
 ];
 
 // Module-level so the carousel gets a stable array (it reloads images when items change).
-// The screenshot doubles as the video's poster, so a card is never blank while its video loads.
+// Local posters load instantly (the old live-screenshot service was slow and often failed on
+// mobile — the main cause of blank cards). Live screenshots are only used if there's no video.
 const CAROUSEL_ITEMS: CircularCarouselItem[] = PROJECTS.map((p) => ({
-  src: p.image ?? shot(p.url),
-  video: p.video,
+  src: p.image ?? (p.video ? poster(p.video) : shot(p.url)),
+  video: p.video ? videoSources(p.video) : undefined,
   alt: `${p.title} website`,
   title: p.title,
   subtitle: p.type,
@@ -166,6 +185,33 @@ const STATUS_STYLE: Record<ProjectStatus, string> = {
   "In development": "bg-yellow-500/15 text-yellow-300",
   Freelance: "bg-[#e84020]/15 text-[#ff7a5c]",
 };
+
+/* ---------- device / network ---------- */
+
+/** Phones play only the front card (saves data + battery); Data Saver / 2G shows posters only. */
+function useVideoMode() {
+  const [mode, setMode] = useState({ mobile: false, videos: true });
+  useEffect(() => {
+    const mq = window.matchMedia(MOBILE);
+    const conn = (navigator as Navigator & {
+      connection?: { saveData?: boolean; effectiveType?: string; addEventListener?: (t: string, f: () => void) => void; removeEventListener?: (t: string, f: () => void) => void };
+    }).connection;
+    const update = () => {
+      const slow = Boolean(conn?.saveData) || /(^|-)2g$/.test(conn?.effectiveType ?? "");
+      setMode((prev) =>
+        prev.mobile === mq.matches && prev.videos === !slow ? prev : { mobile: mq.matches, videos: !slow }
+      );
+    };
+    update();
+    mq.addEventListener("change", update);
+    conn?.addEventListener?.("change", update);
+    return () => {
+      mq.removeEventListener("change", update);
+      conn?.removeEventListener?.("change", update);
+    };
+  }, []);
+  return mode;
+}
 
 /* ---------- responsive card size ---------- */
 
@@ -199,6 +245,7 @@ export default function ProjectsSection({
   className = "",
 }: ProjectsSectionProps) {
   const cardWidth = useCardWidth();
+  const videoMode = useVideoMode();
   const [active, setActive] = useState(0);
   const activeRef = useRef(0);
 
@@ -268,6 +315,11 @@ export default function ProjectsSection({
           innerShade={0.6}
           cornerRadius={14}
           captions={false}
+          videos={videoMode.videos}
+          // phones: play the front card only, pre-buffer its neighbours
+          // desktop: play the front 3, pre-buffer the next ones
+          playRange={videoMode.mobile ? 0.6 : 1.6}
+          warmRange={videoMode.mobile ? 1.6 : 2.6}
           onChange={handleChange}
           onItemClick={handleItemClick}
         />

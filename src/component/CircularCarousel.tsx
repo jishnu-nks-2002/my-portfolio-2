@@ -2,11 +2,22 @@
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
-export interface CircularCarouselItem {
-  /** Image, or the poster frame when `video` is set. */
+export interface CircularCarouselVideoSource {
   src: string;
-  /** Optional looping video (muted). Plays only on the cards near the front. Needs curve={0}. */
-  video?: string;
+  /** e.g. 'video/webm; codecs="vp9"' or 'video/mp4' — the browser skips formats it can't play. */
+  type?: string;
+  /** e.g. "(max-width: 767px)" — lets phones pick a smaller file. */
+  media?: string;
+}
+
+export interface CircularCarouselItem {
+  /** Image, or the poster frame when `video` is set (shown until the video's first frame plays). */
+  src: string;
+  /**
+   * Optional looping muted video: one URL, or sources in order of preference
+   * (e.g. mobile WebM/MP4 with `media`, then desktop WebM, then MP4 fallback). Needs curve={0}.
+   */
+  video?: string | CircularCarouselVideoSource[];
   alt?: string;
   title?: string;
   subtitle?: string;
@@ -42,6 +53,12 @@ export interface CircularCarouselProps {
   innerShade?: number;
   cornerRadius?: number;
   captions?: boolean;
+  /** Turn videos off and show posters only (e.g. on Data Saver). */
+  videos?: boolean;
+  /** Cards within this many slots of the front play their video. */
+  playRange?: number;
+  /** Cards within this many slots of the front start downloading early. */
+  warmRange?: number;
   onChange?: (index: number) => void;
   onItemClick?: (item: CircularCarouselItem, index: number) => void;
   className?: string;
@@ -132,6 +149,9 @@ interface Settings {
   depthFade: number;
   captions: boolean;
   reduced: boolean;
+  videos: boolean;
+  playRange: number;
+  warmRange: number;
 }
 
 interface IntroPose {
@@ -359,6 +379,9 @@ const CircularCarousel = ({
   innerShade = 0.6,
   cornerRadius = 12,
   captions = false,
+  videos = true,
+  playRange = 1.6,
+  warmRange = 2.6,
   onChange,
   onItemClick,
   className = '',
@@ -470,7 +493,10 @@ const CircularCarousel = ({
     stretch: reduced ? 0 : clamp(stretch, 0, 1),
     depthFade: clamp(depthFade, 0, 1),
     captions,
-    reduced
+    reduced,
+    videos,
+    playRange,
+    warmRange
   };
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
@@ -561,16 +587,32 @@ const CircularCarousel = ({
     let raf = 0;
     let visible = true;
 
-    // ---- video playback: only cards near the front play, everything else is paused ----
+    // ---- video playback ----
+    // Cards approaching the front start buffering early ("warm"), so the video is ready by the
+    // time it arrives; only the cards right at the front actually play. Everything else is paused.
     const playing: boolean[] = [];
+    const warmed: boolean[] = [];
+    const videosOf = (index: number) =>
+      Array.from(cardRefs.current[index]?.querySelectorAll('video') ?? []) as HTMLVideoElement[];
+    const warm = (index: number) => {
+      if (warmed[index]) return;
+      warmed[index] = true;
+      videosOf(index).forEach(v => {
+        v.muted = true; // iOS only autoplays muted video, and React doesn't always set the attribute
+        v.preload = 'auto';
+        if (v.readyState === 0) v.load(); // start downloading now
+      });
+    };
     const setPlaying = (index: number, want: boolean) => {
       if (Boolean(playing[index]) === want) return;
       playing[index] = want;
-      const card = cardRefs.current[index];
-      if (!card) return;
-      card.querySelectorAll('video').forEach(v => {
-        if (want) v.play().catch(() => {});
-        else v.pause();
+      videosOf(index).forEach(v => {
+        if (want) {
+          warm(index);
+          v.muted = true;
+          // Low Power Mode / data saver can block autoplay — then the poster simply stays visible
+          v.play().catch(() => {});
+        } else v.pause();
       });
     };
     const pauseAll = () => {
@@ -771,7 +813,10 @@ const CircularCarousel = ({
         const facing = Math.cos(world * TO_RAD);
         if (s.layout.inward) card.style.visibility = Math.abs(world) > 86 ? 'hidden' : '';
         if (videoIndexes.current.has(index)) {
-          setPlaying(index, visible && !document.hidden && !s.reduced && Math.abs(world) < s.step * 1.6);
+          const slots = Math.abs(world) / s.step; // how many cards away from the front
+          const allowed = visible && !document.hidden && !s.reduced && s.videos;
+          if (allowed && slots < s.warmRange) warm(index);
+          setPlaying(index, allowed && slots < s.playRange);
         }
         const fade = s.depthFade * Math.pow((1 - facing) / 2, 1.25);
         card.style.setProperty('--cc-depth', fade.toFixed(3));
@@ -1058,29 +1103,37 @@ const CircularCarousel = ({
           className="absolute left-0 top-0 w-full overflow-hidden"
           style={{ height: axis === 'x' ? size : cardH, borderRadius: frameRadius }}
         >
-          {item.video && tile.total === 1 ? (
-            // one video per card; preload="none" so nothing downloads until the card nears the front
+          {/* poster image — always rendered, so a card is never blank (slow network, iOS, errors) */}
+          <img
+            className="pointer-events-none absolute block max-w-none select-none object-cover [-webkit-user-drag:none]"
+            src={item.src}
+            alt=""
+            draggable={false}
+            decoding="async"
+            style={photoStyle}
+          />
+          {item.video && tile.total === 1 && videos && !reduced && (
+            // one video per card, layered over the poster. Invisible until its first frame is playing,
+            // so there's never a black flash. preload="none" until the card nears the front.
             <video
-              className="pointer-events-none absolute block max-w-none select-none object-cover"
-              src={item.video}
+              className="pointer-events-none absolute block max-w-none select-none object-cover opacity-0 transition-opacity duration-500 data-[shown]:opacity-100"
+              src={typeof item.video === 'string' ? item.video : undefined}
               poster={item.src}
               muted
               loop
               playsInline
               preload="none"
               disablePictureInPicture
+              disableRemotePlayback
               aria-hidden="true"
               style={photoStyle}
-            />
-          ) : (
-            <img
-              className="pointer-events-none absolute block max-w-none select-none object-cover [-webkit-user-drag:none]"
-              src={item.src}
-              alt=""
-              draggable={false}
-              decoding="async"
-              style={photoStyle}
-            />
+              onPlaying={event => event.currentTarget.setAttribute('data-shown', '')}
+            >
+              {Array.isArray(item.video) &&
+                item.video.map(source => (
+                  <source key={source.src} src={source.src} type={source.type} media={source.media} />
+                ))}
+            </video>
           )}
           {gone && (
             <img

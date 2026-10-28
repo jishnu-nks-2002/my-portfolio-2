@@ -109,7 +109,7 @@ export default function MaskRevealBanner({
   frontImageSrc = PLACEHOLDER_FRONT,
   backImageSrc = PLACEHOLDER_BACK,
   mark = "",
-  sideLabel = "Jr. Software Engineer @ Mindstory",
+  sideLabel = "Jr. Software Engineer",
   location = "Thrissur, Kerala",
   tagline = "MERN Stack Developer building dynamic, scalable & user-friendly web experiences.",
   skills = DEFAULT_SKILLS,
