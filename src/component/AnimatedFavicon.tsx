@@ -37,7 +37,7 @@ const LETTERS_PATH =
 const DOT = { x: 445, y: 334.2, r: 31 };
 
 export default function AnimatedFavicon({
-  awayTitle = "👋 Come back! · Jishnu",
+  awayTitle = "Jishnu Narayanan | MERN Stack Developer",
   fps = 12,
 }: AnimatedFaviconProps) {
   useEffect(() => {

@@ -181,7 +181,7 @@ export default function Preloader({
           {/* ---------- top row ---------- */}
           <div className="flex items-start justify-between">
             <span className="pl-fade text-lg font-bold tracking-tight md:text-xl">
-              JN<span style={{ color: RED }}>.</span>
+              JU<span style={{ color: RED }}>.</span>
             </span>
             <span
               className="pl-fade font-mono text-xl font-bold motion-safe:animate-[spin_3s_linear_infinite] md:text-2xl"
