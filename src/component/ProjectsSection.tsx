@@ -2,10 +2,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowUpRight } from "lucide-react";
-import CircularCarousel, {
-  type CircularCarouselItem,
-  type CircularCarouselVideoSource,
-} from "./CircularCarousel";
+import InfiniteSpiral, { type InfiniteSpiralItem, type InfiniteSpiralVideoSource } from "./InfiniteSpiral";
 
 /* ---------- data (from CV) ---------- */
 
@@ -39,7 +36,7 @@ const shot = (url: string) => `https://image.thum.io/get/width/1200/crop/750/${u
  */
 const DIR = "/projects";
 const MOBILE = "(max-width: 767px)";
-const videoSources = (name: string): CircularCarouselVideoSource[] => [
+const videoSources = (name: string): InfiniteSpiralVideoSource[] => [
   { src: `${DIR}/${name}-m.webm`, type: 'video/webm; codecs="vp9"', media: MOBILE },
   { src: `${DIR}/${name}-m.mp4`, type: "video/mp4", media: MOBILE },
   { src: `${DIR}/${name}.webm`, type: 'video/webm; codecs="vp9"' },
@@ -169,15 +166,16 @@ const PROJECTS: Project[] = [
  
 ];
 
-// Module-level so the carousel gets a stable array (it reloads images when items change).
-// Local posters load instantly (the old live-screenshot service was slow and often failed on
-// mobile — the main cause of blank cards). Live screenshots are only used if there's no video.
-const CAROUSEL_ITEMS: CircularCarouselItem[] = PROJECTS.map((p) => ({
+// Module-level so the spiral gets a stable array.
+// Posters are local and load instantly; the front card fades into its video once it arrives.
+const SPIRAL_ITEMS: InfiniteSpiralItem[] = PROJECTS.map((p) => ({
+  id: p.title,
   src: p.image ?? (p.video ? poster(p.video) : shot(p.url)),
   video: p.video ? videoSources(p.video) : undefined,
   alt: `${p.title} website`,
-  title: p.title,
-  subtitle: p.type,
+  label: p.title,
+  href: p.url,
+  target: "_blank",
 }));
 
 const STATUS_STYLE: Record<ProjectStatus, string> = {
@@ -213,20 +211,71 @@ function useVideoMode() {
   return mode;
 }
 
-/* ---------- responsive card size ---------- */
+/* ---------- responsive spiral size ---------- */
 
-function useCardWidth() {
-  const [width, setWidth] = useState(460);
+interface SpiralSize {
+  cardWidth: number;
+  cardHeight: number;
+  radius: number;
+  verticalSpacing: number;
+  centerY: number;
+  /** on-screen width of the front card (after its 1.2× + perspective boost) */
+  frontWidth: number;
+  /** details beside the card (desktop) or underneath (phones / tablets) */
+  sides: boolean;
+}
+
+const PERSPECTIVE = 1200;
+const SIDES_MIN_WIDTH = 1024;
+
+/** Card size + spiral geometry from the screen size (cards are 16:9 like the recordings). */
+function useSpiralSize(): SpiralSize {
+  const [size, setSize] = useState<SpiralSize>({
+    cardWidth: 400,
+    cardHeight: 225,
+    radius: 240,
+    verticalSpacing: 135,
+    centerY: 0.55,
+    frontWidth: 640,
+    sides: true,
+  });
   useEffect(() => {
     const update = () => {
       const w = window.innerWidth;
-      setWidth(w < 640 ? 280 : w < 1024 ? 380 : 460);
+      const h = Math.max(window.innerWidth >= SIDES_MIN_WIDTH ? 720 : 640, window.innerHeight);
+      const sides = w >= SIDES_MIN_WIDTH;
+      const phone = w < 768;
+      // tighter spiral on desktop so neighbours tuck behind the front card instead of under the text
+      const radius = Math.round(sides ? Math.min(200, w * 0.105) : phone ? w * 0.26 : w * 0.22);
+      // the front card is drawn at centerScale (1.2) × the perspective boost of being nearest the viewer
+      const frontScale = 1.2 * Math.min(1.45, PERSPECTIVE / (PERSPECTIVE - radius));
+      const byHeight = ((h * (sides ? 0.5 : phone ? 0.28 : 0.34)) / frontScale) * (16 / 9);
+      const byWidth = (w * (sides ? 0.44 : phone ? 0.9 : 0.6)) / frontScale;
+      const cardWidth = Math.round(Math.min(sides ? 560 : 480, byHeight, byWidth));
+      const cardHeight = Math.round((cardWidth * 9) / 16);
+      const next: SpiralSize = {
+        cardWidth,
+        cardHeight,
+        radius,
+        verticalSpacing: Math.round(cardHeight * (sides ? 0.66 : 0.55)),
+        centerY: sides ? 0.56 : phone ? 0.46 : 0.47,
+        frontWidth: Math.round(cardWidth * frontScale),
+        sides,
+      };
+      setSize((prev) =>
+        prev.cardWidth === next.cardWidth &&
+        prev.radius === next.radius &&
+        prev.centerY === next.centerY &&
+        prev.sides === next.sides
+          ? prev
+          : next
+      );
     };
     update();
     window.addEventListener("resize", update);
     return () => window.removeEventListener("resize", update);
   }, []);
-  return width;
+  return size;
 }
 
 /* ---------- section ---------- */
@@ -244,134 +293,232 @@ export default function ProjectsSection({
   heading = "Things I've built",
   className = "",
 }: ProjectsSectionProps) {
-  const cardWidth = useCardWidth();
+  const spiral = useSpiralSize();
   const videoMode = useVideoMode();
   const [active, setActive] = useState(0);
-  const activeRef = useRef(0);
 
-  const handleChange = useCallback((index: number) => {
-    activeRef.current = index;
-    setActive(index);
-  }, []);
+  // the details panel below follows whichever card is in the centre
+  const handleChange = useCallback((index: number) => setActive(index), []);
 
-  // First click on a side card brings it to the front; clicking the front card opens the site.
-  const handleItemClick = useCallback((_: CircularCarouselItem, index: number) => {
-    if (index === activeRef.current) {
-      window.open(PROJECTS[index].url, "_blank", "noopener,noreferrer");
-    }
+  // progress bars follow the spiral's real autoplay clock (pause on drag / off screen)
+  const barRefs = useRef<Array<HTMLDivElement | null>>([]);
+  const handleAutoplay = useCallback((timing: { start: number; end: number } | null) => {
+    const now = performance.now();
+    barRefs.current.forEach((bar) => {
+      if (!bar) return;
+      if (!timing) {
+        bar.style.transition = "transform 300ms ease";
+        bar.style.transform = "scaleX(0)";
+        return;
+      }
+      const from = Math.min(1, Math.max(0, (now - timing.start) / (timing.end - timing.start)));
+      bar.style.transition = "none";
+      bar.style.transform = `scaleX(${from})`;
+      void bar.offsetWidth; // commit the start position before animating
+      bar.style.transition = `transform ${Math.max(0, timing.end - now)}ms linear`;
+      bar.style.transform = "scaleX(1)";
+    });
   }, []);
 
   const project = PROJECTS[active] ?? PROJECTS[0];
+  const nextProject = PROJECTS[(active + 1) % PROJECTS.length];
+  const counter = `${String(active + 1).padStart(2, "0")} / ${String(PROJECTS.length).padStart(2, "0")}`;
+  // clicking the front card opens the site
+  const handleSelect = useCallback((index: number) => {
+    const url = PROJECTS[index]?.url;
+    if (url) window.open(url, "_blank", "noopener,noreferrer");
+  }, []);
 
   return (
     <section
       id={id}
       aria-labelledby={`${id}-heading`}
-      className={`w-full overflow-hidden bg-[#0a0a0a] py-20 md:py-28 ${className}`}
+      className={`relative isolate h-[100svh] min-h-[640px] w-full lg:min-h-[720px] overflow-hidden bg-[#0a0a0a] text-white ${className}`}
     >
-      {/* header */}
-      <div className="mx-auto mb-10 flex max-w-7xl flex-col gap-6 px-6 md:mb-14 md:flex-row md:items-end md:justify-between md:px-12 lg:px-16">
-        <div>
-          <p className="mb-6 font-mono text-xs font-bold uppercase tracking-widest text-[#e84020] md:text-sm">
-            {label}
-          </p>
-          <h2
-            id={`${id}-heading`}
-            className="text-4xl font-bold leading-[1.1] tracking-tight text-white md:text-6xl"
-          >
-            {heading}
-            <span className="text-[#e84020]">.</span>
-          </h2>
-        </div>
-        <p className="font-mono text-xs uppercase tracking-widest text-white/40">
-          Drag to explore · Click the front card to open
-        </p>
-      </div>
-
-      {/* the loop — full width, panorama wall that wraps around endlessly */}
-      <div className="relative h-[52vh] min-h-[340px] w-full md:h-[64vh] md:min-h-[480px]">
-        <CircularCarousel
-          items={CAROUSEL_ITEMS}
-          preset="panorama"
-          // flat cards (curve 0) → one <video> per card instead of 8 curved strips
-          curve={0}
-          intro="rise"
-          cardWidth={cardWidth}
-          aspectRatio={16 / 10}
-          gap={28}
-          tilt={0}
-          autoplay="drift"
-          speed={6}
-          direction="left"
-          draggable
-          momentum={0.6}
-          snap
-          pauseOnHover
-          focusOnClick
-          parallax={0.25}
-          stretch={0.4}
-          depthFade={0.7}
-          fadeColor="#0a0a0a"
-          innerShade={0.6}
-          cornerRadius={14}
-          captions={false}
+      {/* full-screen 3D spiral — cards wind past, the front one plays its recording */}
+      <div className="absolute inset-0">
+        <InfiniteSpiral
+          items={SPIRAL_ITEMS}
+          mode="step"
+          interval={3.5}
+          glideSpeed={8}
+          direction="up"
+          animationMode="auto-drag"
+          cardWidth={spiral.cardWidth}
+          cardHeight={spiral.cardHeight}
+          radius={spiral.radius}
+          verticalSpacing={spiral.verticalSpacing}
+          centerY={spiral.centerY}
+          perspective={PERSPECTIVE}
+          cardsPerTurn={7}
+          cardRadius={14}
+          centerScale={1.2}
+          edgeFade={0.35}
+          edgeBlur={5}
+          dim={spiral.sides ? 0.68 : 0.55}
+          pauseOnHover={false}
           videos={videoMode.videos}
-          // phones: play the front card only, pre-buffer its neighbours
-          // desktop: play the front 3, pre-buffer the next ones
-          playRange={videoMode.mobile ? 0.6 : 1.6}
-          warmRange={videoMode.mobile ? 1.6 : 2.6}
-          onChange={handleChange}
-          onItemClick={handleItemClick}
+          onActiveChange={handleChange}
+          onSelect={handleSelect}
+          onAutoplay={handleAutoplay}
         />
       </div>
 
-      {/* active project details */}
-      <div className="mx-auto mt-10 max-w-7xl px-6 md:mt-14 md:px-12 lg:px-16">
-        <div
-          key={active}
-          className="flex animate-[projectIn_500ms_cubic-bezier(0.22,1,0.36,1)_both] flex-col gap-6 border-t border-white/10 pt-8 motion-reduce:animate-none md:flex-row md:items-start md:justify-between"
-        >
-          <div className="max-w-2xl">
-            <div className="mb-3 flex flex-wrap items-center gap-3">
-              <span className="font-mono text-sm tabular-nums text-white/40">
-                {String(active + 1).padStart(2, "0")} / {String(PROJECTS.length).padStart(2, "0")}
-              </span>
-              <span className={`rounded-full px-3 py-1 text-xs font-medium ${STATUS_STYLE[project.status]}`}>
-                {project.status}
-              </span>
-              <span className="text-xs uppercase tracking-wider text-white/50">{project.type}</span>
-            </div>
-            <h3 className="text-2xl font-bold text-white md:text-4xl">{project.title}</h3>
-            <p className="mt-3 text-base leading-relaxed text-white/60 md:text-lg">{project.description}</p>
-            <ul className="mt-5 flex flex-wrap gap-2" aria-label="Tech used">
-              {project.stack.map((tech) => (
-                <li
-                  key={tech}
-                  className="rounded-full border border-white/15 px-3 py-1 text-xs text-white/70"
-                >
-                  {tech}
-                </li>
-              ))}
-            </ul>
+      {/* heading — over the top of the carousel */}
+      <div className="pointer-events-none absolute inset-x-0 top-0 z-10 bg-gradient-to-b from-[#0a0a0a] via-[#0a0a0a]/90 to-transparent pb-20 pt-24 md:pt-28">
+        <div className="mx-auto flex max-w-7xl items-end justify-between gap-6 px-6 md:px-12 lg:max-w-[1600px] lg:px-10 xl:px-16">
+          <div>
+            <p className="mb-3 font-mono text-xs font-bold uppercase tracking-widest text-[#e84020] md:text-sm">
+              {label}
+            </p>
+            <h2 id={`${id}-heading`} className="text-3xl font-bold leading-[1.1] tracking-tight md:text-5xl">
+              {heading}
+              <span className="text-[#e84020]">.</span>
+            </h2>
           </div>
-
-          <a
-            href={project.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            data-cursor-label="Visit"
-            className="group inline-flex shrink-0 items-center gap-2 self-start rounded-full bg-[#e84020] px-6 py-3 text-sm font-semibold text-white transition-colors hover:bg-white hover:text-black"
-          >
-            Visit site
-            <ArrowUpRight
-              size={18}
-              className="transition-transform duration-300 group-hover:-translate-y-0.5 group-hover:translate-x-0.5"
-            />
-          </a>
+          <p className="hidden font-mono text-xs uppercase tracking-widest text-white/40 md:block">
+            Drag to spin · Click a card
+          </p>
         </div>
       </div>
 
-      <style>{`@keyframes projectIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }`}</style>
+      {/* ---------- desktop: details beside the front card ---------- */}
+      {spiral.sides && (
+        <>
+          {/* soft fades so the spiral's side cards sit behind the text, never over it */}
+          <div aria-hidden="true" className="pointer-events-none absolute inset-y-0 left-0 z-[5] w-[32%] bg-gradient-to-r from-[#0a0a0a] via-[#0a0a0a]/90 to-transparent" />
+          <div aria-hidden="true" className="pointer-events-none absolute inset-y-0 right-0 z-[5] w-[32%] bg-gradient-to-l from-[#0a0a0a] via-[#0a0a0a]/90 to-transparent" />
+
+          <div
+            className="pointer-events-none absolute inset-x-0 z-10 mx-auto grid max-w-[1600px] -translate-y-1/2 items-center px-10 xl:px-16"
+            style={{
+              top: `${spiral.centerY * 100}%`,
+              gridTemplateColumns: `minmax(0,1fr) ${spiral.frontWidth + 64}px minmax(0,1fr)`,
+            }}
+          >
+            {/* left — what it is */}
+            <div key={`l-${active}`} className="max-w-sm animate-[projectInL_600ms_cubic-bezier(0.22,1,0.36,1)_both] motion-reduce:animate-none">
+              <p className="font-mono text-6xl font-bold tabular-nums leading-none text-white/10 xl:text-7xl">
+                {String(active + 1).padStart(2, "0")}
+              </p>
+              <div className="mt-5 flex flex-wrap items-center gap-3">
+                <span className={`rounded-full px-3 py-1 text-xs font-medium ${STATUS_STYLE[project.status]}`}>
+                  {project.status}
+                </span>
+                <span className="text-xs uppercase tracking-wider text-white/50">{project.type}</span>
+              </div>
+              <h3 className="mt-4 text-3xl font-bold leading-[1.1] tracking-tight xl:text-[2.75rem]">{project.title}</h3>
+              <p className="mt-4 text-base leading-relaxed text-white/60">{project.description}</p>
+            </div>
+
+            {/* centre — the card lives here */}
+            <div />
+
+            {/* right — how it's built + link */}
+            <div className="flex justify-end">
+              <div className="w-full max-w-xs">
+                <div key={`r-${active}`} className="animate-[projectInR_600ms_cubic-bezier(0.22,1,0.36,1)_both] motion-reduce:animate-none">
+                  <p className="font-mono text-xs uppercase tracking-widest text-white/40">Built with</p>
+                  <ul className="mt-4 flex flex-wrap gap-2" aria-label="Tech used">
+                    {project.stack.map((tech) => (
+                      <li key={tech} className="rounded-full border border-white/15 px-3 py-1.5 text-sm text-white/75">
+                        {tech}
+                      </li>
+                    ))}
+                  </ul>
+                  <a
+                    href={project.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    data-cursor-label="Visit"
+                    className="group pointer-events-auto mt-8 inline-flex items-center gap-2 rounded-full bg-[#e84020] px-6 py-3 text-sm font-semibold text-white transition-colors hover:bg-white hover:text-black"
+                  >
+                    Visit site
+                    <ArrowUpRight
+                      size={18}
+                      className="transition-transform duration-300 group-hover:-translate-y-0.5 group-hover:translate-x-0.5"
+                    />
+                  </a>
+                </div>
+
+                {/* autoplay clock */}
+                <div className="mt-10">
+                  <div className="flex items-center justify-between font-mono text-xs uppercase tracking-widest text-white/40">
+                    <span className="whitespace-nowrap tabular-nums">{counter}</span>
+                    <span className="truncate pl-4">Next · {nextProject.title}</span>
+                  </div>
+                  <div className="mt-3 h-px w-full overflow-hidden bg-white/10" aria-hidden="true">
+                    <div
+                      ref={(node) => {
+                        barRefs.current[0] = node;
+                      }}
+                      className="h-full origin-left bg-[#e84020]"
+                      style={{ transform: "scaleX(0)" }}
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* ---------- phones / tablets: details under the card ---------- */}
+      {!spiral.sides && (
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-[#0a0a0a] via-[#0a0a0a]/90 to-transparent pb-8 pt-24">
+          <div className="mx-auto max-w-7xl px-6 md:px-12">
+            <div
+              key={active}
+              className="flex animate-[projectIn_500ms_cubic-bezier(0.22,1,0.36,1)_both] flex-col gap-4 motion-reduce:animate-none md:flex-row md:items-end md:justify-between md:gap-8"
+            >
+              <div className="max-w-2xl">
+                <div className="mb-2 flex flex-wrap items-center gap-3">
+                  <span className="font-mono text-sm tabular-nums text-white/50">{counter}</span>
+                  <span className={`rounded-full px-3 py-1 text-xs font-medium ${STATUS_STYLE[project.status]}`}>
+                    {project.status}
+                  </span>
+                  <span className="text-xs uppercase tracking-wider text-white/50">{project.type}</span>
+                </div>
+                <h3 className="text-2xl font-bold md:text-4xl">{project.title}</h3>
+                <p className="mt-2 line-clamp-2 text-sm leading-relaxed text-white/65 md:text-base">
+                  {project.description}
+                </p>
+                <ul className="mt-3 hidden flex-wrap gap-2 sm:flex" aria-label="Tech used">
+                  {project.stack.map((tech) => (
+                    <li key={tech} className="rounded-full border border-white/15 px-3 py-1 text-xs text-white/70">
+                      {tech}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <a
+                href={project.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="group pointer-events-auto inline-flex shrink-0 items-center gap-2 self-start rounded-full bg-[#e84020] px-6 py-3 text-sm font-semibold text-white transition-colors hover:bg-white hover:text-black md:self-end"
+              >
+                Visit site
+                <ArrowUpRight size={18} />
+              </a>
+            </div>
+            <div className="mt-6 h-px w-full overflow-hidden bg-white/10" aria-hidden="true">
+              <div
+                ref={(node) => {
+                  barRefs.current[1] = node;
+                }}
+                className="h-full origin-left bg-[#e84020]"
+                style={{ transform: "scaleX(0)" }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      <style>{`
+        @keyframes projectIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes projectInL { from { opacity: 0; transform: translateX(-24px); } to { opacity: 1; transform: translateX(0); } }
+        @keyframes projectInR { from { opacity: 0; transform: translateX(24px); } to { opacity: 1; transform: translateX(0); } }
+      `}</style>
     </section>
   );
 }

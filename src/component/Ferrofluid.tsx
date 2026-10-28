@@ -29,6 +29,8 @@ export interface FerrofluidProps extends HTMLAttributes<HTMLDivElement> {
   opacity?: number;
   paused?: boolean;
   dpr?: number;
+  /** Cap the frame rate (e.g. 30). The fluid moves slowly, so 30fps looks the same at half the GPU work. */
+  maxFps?: number;
   mixBlendMode?: CSSProperties['mixBlendMode'];
 }
 
@@ -57,6 +59,7 @@ type Settings = {
   opacity: number;
   paused: boolean;
   dpr?: number;
+  maxFps?: number;
 };
 
 type Program = { program: WebGLProgram; uniforms: Record<string, WebGLUniformLocation | null> };
@@ -518,13 +521,13 @@ const Ferrofluid = ({
   opacity = 1,
   paused = false,
   dpr,
+  maxFps,
   mixBlendMode,
   className = '',
   style,
   ...rest
 }: FerrofluidProps) => {
   const containerRef = useRef<HTMLDivElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
   const wakeRef = useRef<(() => void) | null>(null);
   const settings: Settings = {
     colors: Array.isArray(colors) && colors.length ? colors.slice(0, 3) : ['#ffffff'],
@@ -550,28 +553,42 @@ const Ferrofluid = ({
     color,
     opacity: clamp(opacity, 0, 1),
     paused,
-    dpr
+    dpr,
+    maxFps
   };
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
 
   useEffect(() => {
     const container = containerRef.current;
-    const canvas = canvasRef.current;
-    const gl = canvas?.getContext('webgl2', {
+    if (!container) return undefined;
+    // A brand-new canvas on every mount. The cleanup below releases the GPU context with
+    // loseContext(); reusing the same <canvas> afterwards (React Strict Mode mounts twice in
+    // development) would hand back that dead context and the fluid would silently stay blank.
+    const canvas = document.createElement('canvas');
+    canvas.className = 'absolute inset-0 block h-full w-full';
+    canvas.setAttribute('aria-hidden', 'true');
+    container.appendChild(canvas);
+    const gl = canvas.getContext('webgl2', {
       alpha: true,
       premultipliedAlpha: true,
       antialias: false,
       depth: false,
       stencil: false
     });
-    if (!container || !canvas || !gl) return undefined;
+    if (!gl) {
+      canvas.remove();
+      return undefined;
+    }
 
     const floatTargets = Boolean(gl.getExtension('EXT_color_buffer_float'));
     const sim = link(gl, SIM_FRAGMENT);
     const bounds = link(gl, BOUND_FRAGMENT);
     const render = link(gl, RENDER_FRAGMENT);
-    if (!sim || !bounds || !render) return undefined;
+    if (!sim || !bounds || !render) {
+      canvas.remove();
+      return undefined;
+    }
 
     const buffer = gl.createBuffer();
     const vao = gl.createVertexArray();
@@ -842,6 +859,11 @@ const Ferrofluid = ({
     const frame = (now: number) => {
       raf = 0;
       if (!visible || document.hidden) return;
+      const cap = settingsRef.current.maxFps;
+      if (cap && last && now - last < 1000 / cap - 2) {
+        raf = requestAnimationFrame(frame); // skip this frame — keeps the frame rate at the cap
+        return;
+      }
       const dt = last ? clamp((now - last) / 1000, 0.0005, 0.05) : 1 / 60;
       last = now;
       step(dt);
@@ -946,6 +968,7 @@ const Ferrofluid = ({
       gl.deleteBuffer(buffer);
       gl.deleteVertexArray(vao);
       gl.getExtension('WEBGL_lose_context')?.loseContext();
+      canvas.remove();
     };
   }, []);
 
@@ -960,7 +983,6 @@ const Ferrofluid = ({
       style={mixBlendMode ? { ...style, mixBlendMode } : style}
       {...rest}
     >
-      <canvas ref={canvasRef} className="absolute inset-0 block h-full w-full" aria-hidden="true" />
     </div>
   );
 };

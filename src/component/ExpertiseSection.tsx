@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { gsap } from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
 import { useGSAP } from "@gsap/react";
@@ -14,6 +14,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import Ferrofluid from "./Ferrofluid";
+import TiltCard from "./TiltCard";
 
 gsap.registerPlugin(ScrollTrigger, useGSAP);
 
@@ -112,97 +113,99 @@ const DEFAULT_CATEGORIES: SkillCategory[] = [
   },
 ];
 
-/* ---------- 3D tilt card ----------
- * No borders — depth comes from soft shadows and layers.
- * The card tilts toward the mouse; icon, title and chips sit at different
- * depths (translateZ) so they shift against each other as it tilts.
- * Mouse-only; flat on touch screens and with reduced motion.
+// Stable references — a new array every render would make the fluid re-read its colours.
+const FLUID_COLORS = ["#e84020", "#c8280c", "#ff8a6b"];
+const BG = "#f4f3f1";
+
+/* ---------- performance helpers ---------- */
+
+/**
+ * Fluid on every screen size, rendered to a fixed pixel budget.
+ * It covers the whole section, but the render resolution is scaled so the canvas stays within
+ * the budget whatever the screen size or pixel ratio — smaller on phones to save battery.
+ * (Reduced-motion users still see it: the fluid component freezes its own motion for them.)
  */
+const PIXEL_BUDGET = 1_100_000;
+const PHONE_BUDGET = 550_000;
 
-function TiltCard({ className = "", children }: { className?: string; children: React.ReactNode }) {
-  const wrapRef = useRef<HTMLDivElement>(null);
-  const cardRef = useRef<HTMLDivElement>(null);
-  const glareRef = useRef<HTMLDivElement>(null);
-
+function useFluidBudget<T extends Element>(ref: React.RefObject<T | null>) {
+  const [mode, setMode] = useState({ enabled: false, dpr: 1 });
   useEffect(() => {
-    const wrap = wrapRef.current;
-    const card = cardRef.current;
-    const glare = glareRef.current;
-    if (!wrap || !card || !glare) return;
-
-    const canTilt =
-      window.matchMedia("(hover: hover) and (pointer: fine)").matches &&
-      !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    if (!canTilt) return;
-
-    const MAX_DEG = 8;
-    let tx = 0;
-    let ty = 0;
-    let cx = 0;
-    let cy = 0;
-    let gx = 50;
-    let gy = 50;
-    let raf = 0;
-
-    const loop = () => {
-      cx += (tx - cx) * 0.12;
-      cy += (ty - cy) * 0.12;
-      card.style.transform = `rotateX(${cy.toFixed(2)}deg) rotateY(${cx.toFixed(2)}deg)`;
-      glare.style.background = `radial-gradient(circle at ${gx}% ${gy}%, rgba(255,255,255,0.7), rgba(255,255,255,0) 50%)`;
-      if (Math.abs(tx - cx) > 0.01 || Math.abs(ty - cy) > 0.01) raf = requestAnimationFrame(loop);
-      else raf = 0;
+    const el = ref.current;
+    if (!el) return;
+    const capable = window.matchMedia("(min-width: 768px)");
+    const update = () => {
+      const { width, height } = el.getBoundingClientRect();
+      const css = Math.max(1, width * height);
+      const budget = capable.matches ? PIXEL_BUDGET : PHONE_BUDGET;
+      // round to 0.05 steps so tiny height changes don't keep resizing the canvas
+      const dpr = Math.round(Math.min(1, Math.max(0.45, Math.sqrt(budget / css))) * 20) / 20;
+      const enabled = true;
+      setMode((prev) => (prev.enabled === enabled && prev.dpr === dpr ? prev : { enabled, dpr }));
     };
-    const start = () => {
-      if (!raf) raf = requestAnimationFrame(loop);
-    };
-
-    const onMove = (e: PointerEvent) => {
-      const r = wrap.getBoundingClientRect();
-      const nx = (e.clientX - r.left) / r.width;
-      const ny = (e.clientY - r.top) / r.height;
-      tx = (nx - 0.5) * 2 * MAX_DEG;
-      ty = -(ny - 0.5) * 2 * MAX_DEG;
-      gx = nx * 100;
-      gy = ny * 100;
-      glare.style.opacity = "1";
-      start();
-    };
-    const onLeave = () => {
-      tx = 0;
-      ty = 0;
-      glare.style.opacity = "0";
-      start();
-    };
-
-    wrap.addEventListener("pointermove", onMove);
-    wrap.addEventListener("pointerleave", onLeave);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    capable.addEventListener("change", update);
     return () => {
-      cancelAnimationFrame(raf);
-      wrap.removeEventListener("pointermove", onMove);
-      wrap.removeEventListener("pointerleave", onLeave);
+      ro.disconnect();
+      capable.removeEventListener("change", update);
     };
-  }, []);
+  }, [ref]);
+  return mode;
+}
 
-  return (
-    // outer wrapper: perspective + entrance animation target (kept separate from the tilt transform)
-    <div ref={wrapRef} className={`expertise-card group [perspective:1200px] ${className}`}>
-      <div
-        ref={cardRef}
-        className="relative h-full rounded-3xl bg-white/90 p-6 [transform-style:preserve-3d] will-change-transform md:p-8
-          shadow-[0_1px_2px_rgba(0,0,0,0.04),0_12px_32px_-16px_rgba(0,0,0,0.18)]
-          transition-shadow duration-500
-          group-hover:shadow-[0_2px_4px_rgba(0,0,0,0.04),0_40px_70px_-24px_rgba(232,64,32,0.35),0_24px_40px_-24px_rgba(0,0,0,0.25)]"
-      >
-        {/* glare */}
-        <div
-          ref={glareRef}
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-0 rounded-3xl opacity-0 mix-blend-soft-light transition-opacity duration-300 [transform:translateZ(1px)]"
-        />
-        {children}
-      </div>
-    </div>
-  );
+/**
+ * When to create the WebGL fluid. Compiling its shaders is a one-off hitch, so we do it
+ * while the browser is idle after the page has loaded — not while you're scrolling into
+ * the section. If you scroll there fast, it starts as soon as the section is getting close.
+ */
+function useMountWhenIdle<T extends Element>(ref: React.RefObject<T | null>) {
+  const [mount, setMount] = useState(false);
+  useEffect(() => {
+    if (mount) return;
+    const el = ref.current;
+    let idleId = 0;
+    let timer = 0;
+    const go = () => setMount(true);
+
+    const scheduleIdle = () => {
+      const w = window as Window & {
+        requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+      };
+      if (w.requestIdleCallback) idleId = w.requestIdleCallback(go, { timeout: 3000 });
+      else timer = window.setTimeout(go, 1200);
+    };
+    if (document.readyState === "complete") scheduleIdle();
+    else window.addEventListener("load", scheduleIdle, { once: true });
+
+    const io = el
+      ? new IntersectionObserver(([e]) => e.isIntersecting && go(), { rootMargin: "1200px 0px" })
+      : null;
+    if (el && io) io.observe(el);
+
+    return () => {
+      window.removeEventListener("load", scheduleIdle);
+      const w = window as Window & { cancelIdleCallback?: (id: number) => void };
+      if (idleId && w.cancelIdleCallback) w.cancelIdleCallback(idleId);
+      window.clearTimeout(timer);
+      io?.disconnect();
+    };
+  }, [ref, mount]);
+  return mount;
+}
+
+/** True while the section is on screen (used to fade the fluid in once it's ready). */
+function useInView<T extends Element>(ref: React.RefObject<T | null>) {
+  const [inView, setInView] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const io = new IntersectionObserver(([e]) => setInView(e.isIntersecting));
+    io.observe(el);
+    return () => io.disconnect();
+  }, [ref]);
+  return inView;
 }
 
 /* ---------- section ---------- */
@@ -212,7 +215,7 @@ interface ExpertiseSectionProps {
   label?: string;
   heading?: string;
   categories?: SkillCategory[];
-  /** Turn the ferrofluid background off (plain black). */
+  /** Turn the ferrofluid background off. */
   showFluid?: boolean;
   className?: string;
 }
@@ -228,26 +231,42 @@ export default function ExpertiseSection({
   const rootRef = useRef<HTMLElement>(null);
   const total = categories.reduce((n, c) => n + c.skills.length, 0);
 
-  // Header and cards rise in once when scrolled into view.
+  const fluidMode = useFluidBudget(rootRef);
+  const mounted = useMountWhenIdle(rootRef);
+  const inView = useInView(rootRef);
+  const renderFluid = showFluid && fluidMode.enabled && mounted;
+  const [fluidShown, setFluidShown] = useState(false);
+
+  // Fade the fluid in shortly after it first becomes visible, so its first frames never pop.
+  useEffect(() => {
+    if (!renderFluid || !inView || fluidShown) return;
+    const t = window.setTimeout(() => setFluidShown(true), 120);
+    return () => window.clearTimeout(t);
+  }, [renderFluid, inView, fluidShown]);
+
+  // Header and cards rise in once. clearProps leaves no transforms behind afterwards.
   useGSAP(
     () => {
       const mm = gsap.matchMedia();
       mm.add("(prefers-reduced-motion: no-preference)", () => {
         gsap.from(".expertise-head > *", {
-          opacity: 0,
+          autoAlpha: 0,
           y: 24,
           duration: 0.7,
           ease: "power3.out",
           stagger: 0.1,
+          clearProps: "transform,opacity,visibility",
           scrollTrigger: { trigger: ".expertise-head", start: "top 85%", once: true },
         });
         gsap.from(".expertise-card", {
-          opacity: 0,
-          y: 50,
-          duration: 0.9,
+          autoAlpha: 0,
+          y: 40,
+          duration: 0.8,
           ease: "power3.out",
-          stagger: 0.08,
-          scrollTrigger: { trigger: ".expertise-grid", start: "top 80%", once: true },
+          stagger: 0.07,
+          force3D: true,
+          clearProps: "transform,opacity,visibility",
+          scrollTrigger: { trigger: ".expertise-grid", start: "top 85%", once: true },
         });
       });
       return () => mm.revert();
@@ -260,36 +279,61 @@ export default function ExpertiseSection({
       ref={rootRef}
       id={id}
       aria-labelledby={`${id}-heading`}
-      className={`relative isolate w-full overflow-hidden bg-[#f4f3f1] ${className}`}
+      className={`relative isolate w-full overflow-hidden ${className}`}
+      style={{ backgroundColor: BG }}
     >
-      {/* ferrofluid background — light "paper" mode on off-white, shaded in red */}
-      {showFluid && (
-        <div aria-hidden="true" className="absolute inset-0 -z-10">
-          <Ferrofluid
-            lightMode
-            colors={["#e84020", "#e84020", "#ff8a6b"]}
-            transparent={false}
-            color="#f4f3f1"
-            brightness={1}
-            speed={0.4}
-            scale={1.6}
-            spikeHeight={1}
-            sharpness={2.5}
-            turbulence={1}
-            fluidity={0.5}
-            tilt={48}
-            magnetism={1}
-            flowDirection="down"
-            mouseInteraction
-            mouseStrength={1}
-            mouseRadius={0.22}
-            clickPulse
-            intro
-          />
-          {/* darken top/bottom so it blends into the next sections and keeps text readable */}
-          <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-[#f4f3f1] via-[#f4f3f1]/20 to-[#f4f3f1]" />
-        </div>
-      )}
+      {/* ---------- background ----------
+          Covers the whole section. Kept light by a fixed pixel budget (see useFluidBudget),
+          a 30fps cap, idle-time setup, and pausing whenever the section is off screen. */}
+      <div aria-hidden="true" className="pointer-events-none absolute inset-0 -z-10">
+        {/* soft static glow — shown while the fluid loads (or if WebGL isn't available) */}
+        <div className="absolute -top-40 left-1/2 h-[520px] w-[820px] -translate-x-1/2 rounded-full bg-[#e84020]/10 blur-[120px]" />
+
+        {renderFluid && (
+          <div
+            className="absolute inset-0 transition-opacity duration-700 ease-out"
+            style={{ opacity: fluidShown ? 1 : 0 }}
+          >
+            <Ferrofluid
+              lightMode
+              colors={FLUID_COLORS}
+              transparent={false}
+              color={BG}
+              dpr={fluidMode.dpr}
+              maxFps={30}
+              brightness={1.2}
+              speed={0.4}
+              scale={1.6}
+              spikeHeight={1}
+              sharpness={2.5}
+              turbulence={1}
+              fluidity={0.5}
+              tilt={48}
+              magnetism={1}
+              flowDirection="down"
+              mouseInteraction
+              mouseStrength={1}
+              mouseRadius={0.22}
+              clickPulse={false}
+              intro={false}
+            />
+            {/* light wash so text stays crisp over the fluid */}
+            <div className="absolute inset-0" style={{ backgroundColor: `${BG}1a` }} />
+          </div>
+        )}
+      </div>
+
+      {/* fades into the neighbouring sections */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-40"
+        style={{ background: `linear-gradient(to bottom, ${BG}, ${BG}00)` }}
+      />
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-x-0 bottom-0 -z-10 h-40"
+        style={{ background: `linear-gradient(to top, ${BG}, ${BG}00)` }}
+      />
 
       <div className="relative px-6 py-20 md:px-12 md:py-28 lg:px-16">
         <div className="mx-auto max-w-7xl">
@@ -330,7 +374,11 @@ export default function ExpertiseSection({
             {categories.map((cat) => {
               const Icon = cat.icon;
               return (
-                <TiltCard key={cat.number} className={cat.span ?? ""}>
+                <TiltCard
+                  key={cat.number}
+                  className={`expertise-card ${cat.span ?? ""}`}
+                  cardClassName="p-6 md:p-8"
+                >
                   {/* big faded number — back layer */}
                   <span
                     aria-hidden="true"

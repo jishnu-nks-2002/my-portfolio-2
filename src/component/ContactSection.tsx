@@ -6,7 +6,11 @@ import { ScrollTrigger } from "gsap/ScrollTrigger";
 import { useGSAP } from "@gsap/react";
 import { ArrowUpRight, Download, Eye, Mail, MapPin, Phone, Copy, Check, ArrowUp } from "lucide-react";
 import TiltCard from "./TiltCard";
-import HalftoneReveal from "./HalftoneReveal";
+import dynamic from "next/dynamic";
+
+// 3D lanyard (three.js) — loaded only in the browser, and only when the section is near,
+// so it doesn't add weight to the first page load.
+const LanyardBadge = dynamic(() => import("./LanyardBadge"), { ssr: false });
 
 gsap.registerPlugin(ScrollTrigger, useGSAP);
 
@@ -59,13 +63,26 @@ interface ContactSectionProps {
   cvFileName?: string;
   location?: string;
   name?: string;
-  /** Your photo for the halftone portrait (in /public). */
+  /** Your photo for the ID card on the lanyard (in /public). */
   portraitSrc?: string;
   className?: string;
 }
 
-/** True once the element comes near the viewport — delays the WebGL portrait until it's needed. */
-function useNearViewport<T extends Element>(ref: React.RefObject<T | null>, rootMargin = "300px") {
+/** Matches Tailwind's lg breakpoint. */
+function useIsDesktop() {
+  const [desktop, setDesktop] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width: 1024px)");
+    const update = () => setDesktop(mq.matches);
+    update();
+    mq.addEventListener("change", update);
+    return () => mq.removeEventListener("change", update);
+  }, []);
+  return desktop;
+}
+
+/** True once the element comes near the viewport — delays the 3D lanyard until it's needed. */
+function useNearViewport<T extends Element>(ref: React.RefObject<T | null>, rootMargin = "500px") {
   const [near, setNear] = useState(false);
   useEffect(() => {
     const el = ref.current;
@@ -100,12 +117,13 @@ export default function ContactSection({
   cvFileName = "Jishnu_Narayanan_Resume.pdf",
   location = "Thrissur, Kerala · India",
   name = "Jishnu Narayanan",
-  portraitSrc = "/images/footer.png",
+  portraitSrc = "/images/footer-img.png",
   className = "",
 }: ContactSectionProps) {
   const rootRef = useRef<HTMLElement>(null);
   const portraitRef = useRef<HTMLDivElement>(null);
   const portraitNear = useNearViewport(portraitRef);
+  const isDesktop = useIsDesktop();
   const [copied, setCopied] = useState(false);
 
   const whatsappUrl = `https://wa.me/${phone}?text=${encodeURIComponent(whatsappMessage)}`;
@@ -228,19 +246,10 @@ export default function ContactSection({
 
       <div className="mx-auto max-w-7xl">
         {/* ---------- heading ---------- */}
-        <div className="contact-head">
-          <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
-            <p className="font-mono text-xs font-bold uppercase tracking-widest text-[#e84020] md:text-sm">
-              {label}
-            </p>
-            <span className="inline-flex items-center gap-2 rounded-full bg-white/[0.06] px-4 py-2 text-xs font-medium text-white/80 md:text-sm">
-              <span className="relative flex h-2 w-2" aria-hidden="true">
-                <span className="absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75 motion-safe:animate-ping" />
-                <span className="relative inline-flex h-2 w-2 rounded-full bg-green-400" />
-              </span>
-              Open to freelance &amp; full-time roles
-            </span>
-          </div>
+        <div className="contact-head relative">
+          <p className="mb-8 font-mono text-xs font-bold uppercase tracking-widest text-[#e84020] md:text-sm">
+            {label}
+          </p>
 
           <div className="grid grid-cols-1 items-end gap-12 lg:grid-cols-[7fr_5fr] lg:gap-16">
           <div>
@@ -261,56 +270,37 @@ export default function ContactSection({
           </p>
           </div>
 
-          {/* ---------- halftone portrait — hover/drag to reveal the photo, click for a burst ---------- */}
-          <div
-            ref={portraitRef}
-            className="contact-portrait relative mx-auto w-full max-w-sm lg:max-w-none"
-          >
-            {/* orange frame offset behind, like the About photo */}
+          {/* ---------- 3D lanyard ID card — drag to swing, tap to flip ----------
+              Phones: sits under the heading.
+              Desktop: pulled out of the grid and pinned to the right, starting at the very top of
+              the section (-top-32 cancels the section's top padding), so the strap hangs from the top
+              edge. No box, border or fade around it — the canvas is transparent. */}
+          <div ref={portraitRef} className="contact-portrait relative w-full lg:static">
             <div
-              aria-hidden="true"
-              className="absolute inset-0 translate-x-4 translate-y-4 rounded-3xl border-2 border-[#e84020]"
-            />
-            <div
-              className="relative aspect-[4/5] overflow-hidden rounded-3xl bg-[#0b0b0b] shadow-[0_40px_90px_-30px_rgba(232,64,32,0.45)]"
-              data-cursor-label="Reveal"
+              className="relative h-[520px] w-full sm:h-[580px]
+                [mask-image:linear-gradient(to_bottom,transparent,#000_10%)] [-webkit-mask-image:linear-gradient(to_bottom,transparent,#000_10%)]
+                lg:absolute lg:-top-32 lg:bottom-0 lg:-right-16 lg:h-auto lg:w-[54%]
+                lg:[mask-image:none] lg:[-webkit-mask-image:none]"
               role="img"
-              aria-label={`Portrait of ${name}`}
+              aria-label={`ID card for ${name}, MERN Stack Developer — drag to swing, tap to flip`}
             >
               {portraitNear && (
-                <HalftoneReveal
-                  src={portraitSrc}
-                  fit="cover"
-                  mode="duotone"
-                  shape="dot"
-                  cellSize={7}
-                  angle={45}
-                  dotScale={1.05}
-                  inkColor="#f4f3f1"
-                  accentColor="#e84020"
-                  paperColor="#0b0b0b"
-                  contrast={1.2}
-                  brightness={0.02}
-                  misregistration={0.25}
-                  roughness={0.15}
-                  revealRadius={140}
-                  softness={0.6}
-                  linger={1.4}
-                  clickBurst
-                  intro
+                <LanyardBadge
+                  photo={portraitSrc}
+                  name={name}
+                  role="MERN Stack Developer"
+                  title="Jr. Software Engineer · Mindstory"
+                  email={email}
+                  phone={phoneDisplay}
+                  location={location}
+                  // taller box on desktop → slightly smaller share for the card, longer strap
+                  size={isDesktop ? 0.6 : 0.56}
+                  strapLength={isDesktop ? 0.45 : 0.62}
                 />
               )}
-
-              {/* caption */}
-              <div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-end justify-between bg-gradient-to-t from-black/80 to-transparent p-5 pt-16">
-                <div>
-                  <p className="text-lg font-bold text-white">{name}</p>
-                  <p className="text-xs text-white/70">MERN Stack Developer</p>
-                </div>
-                <span className="rounded-full bg-white/15 px-3 py-1 font-mono text-[10px] uppercase tracking-widest text-white/80 backdrop-blur-sm">
-                  Hover to reveal
-                </span>
-              </div>
+              <p className="pointer-events-none absolute inset-x-0 bottom-2 text-center font-mono text-[10px] uppercase tracking-widest text-white/35 md:text-xs">
+                Drag to swing · Tap to flip
+              </p>
             </div>
           </div>
           </div>
