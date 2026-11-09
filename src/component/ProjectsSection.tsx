@@ -145,14 +145,23 @@ const PROJECTS: Project[] = [
     url: "https://new-aroof-emvh.vercel.app/",
     video: vid("a-roof"),
   },
-  {
+    {
     title: "Empavai",
     type: "Freelance · UAE",
-    status: "Freelance",
+    status: "Live",
     stack: ["Next.js", "Node.js", "MongoDB"],
-    description: "Freelance full-stack web app for a UAE-based client.",
-    url: "https://nithyasoorya.vercel.app/",
+    description: "Full-stack web app for a UAE-based client, now live in production.",
+    url: "https://www.empavai.com/",
     video: vid("empavai"),
+  },
+    {
+    title: "Threography",
+    type: "Full Stack",
+    status: "In development",
+    stack: ["Next.js", "Node.js", "MongoDB"],
+    description: "Web platform currently in development.",
+    url: "https://threography.com/",
+    video: vid("threo") 
   },
   {
     title: "Crock & Crumb",
